@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deteksi Jari & Animasi</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden; /* Penting biar animasi gak keluar dari viewport */
+        }
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+            text-align: center;
+            margin-bottom: 20px;
+            max-width: 800px;
+            width: 90%;
+            position: relative;
+        }
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 1rem;
+        }
+        .video-wrapper {
+            position: relative;
+            width: 100%;
+            padding-bottom: 75%; /* Rasio 4:3 untuk video */
+            background-color: #34495e;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+        video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border-radius: 8px;
+            transform: scaleX(-1); /* Mirror effect */
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border-radius: 8px;
+            transform: scaleX(-1); /* Mirror effect juga untuk overlay */
+        }
+        #status {
+            margin-top: 15px;
+            font-weight: bold;
+            color: #3498db;
+        }
+
+        /* Gaya untuk animasi (contoh: lingkaran kecil) */
+        .animation-dot {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background-color: #e74c3c;
+            border-radius: 50%;
+            opacity: 0.8;
+            pointer-events: none; /* Penting agar tidak menghalangi event lain */
+            transform: translate(-50%, -50%); /* Posisi tepat di tengah */
+            transition: transform 0.1s ease-out, opacity 0.5s ease-out; /* Animasi smooth */
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Gerakan Jari Interaktif</h1>
+        <p>Arahkan jari lo ke kamera!</p>
+        
+        <div class="video-wrapper">
+            <video id="webcam" playsinline style="display: none;"></video>
+            <canvas id="gestureCanvas"></canvas>
+        </div>
+
+        <div id="status">Memuat model deteksi tangan...</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('gestureCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusDisplay = document.getElementById('status');
+        let model;
+        let animationCounter = 0; // Untuk ID animasi unik
+
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        resolve(video);
+                    };
+                });
+            } catch (error) {
+                console.error("Gagal akses kamera:", error);
+                statusDisplay.style.color = "red";
+                statusDisplay.innerText = "Error: Gagal akses kamera. Pastikan browser lo diizinkan.";
+                return null;
+            }
+        }
+
+        async function loadHandModel() {
+            statusDisplay.innerText = "Memuat model deteksi tangan...";
+            // Menggunakan HandPoseDetection dari MediaPipe
+            const detectorConfig = {
+                runtime: 'mediapipe', // atau 'tfjs'
+                modelType: 'full' // 'lite' atau 'full'
+            };
+            model = await handPoseDetection.createDetector(
+                handPoseDetection.SupportedModels.MediaPipeHands,
+                detectorConfig
+            );
+            statusDisplay.innerText = "Model berhasil dimuat. Mencari tangan...";
+        }
+
+        function drawHand(predictions) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Bersihkan canvas
+
+            if (predictions.length > 0) {
+                for (let i = 0; i < predictions.length; i++) {
+                    const hand = predictions[i];
+                    
+                    // Gambar titik jari (landmarks)
+                    for (let j = 0; j < hand.keypoints.length; j++) {
+                        const keypoint = hand.keypoints[j];
+                        ctx.beginPath();
+                        ctx.arc(keypoint.x, keypoint.y, 5, 0, 2 * Math.PI); // Lingkaran kecil
+                        ctx.fillStyle = '#1e90ff';
+                        ctx.fill();
+                    }
+
+                    // Contoh: Deteksi posisi jari telunjuk (index finger tip)
+                    // Jari telunjuk biasanya keypoint ke-8 atau bisa dicek di docs MediaPipe Hands
+                    const indexFingerTip = hand.keypoints[8]; 
+                    if (indexFingerTip) {
+                        statusDisplay.innerText = `Jari terdeteksi di X: ${Math.round(indexFingerTip.x)}, Y: ${Math.round(indexFingerTip.y)}`;
+                        createAnimation(indexFingerTip.x, indexFingerTip.y);
+                    }
+                }
+            } else {
+                statusDisplay.innerText = "Tidak ada tangan terdeteksi.";
+            }
+        }
+
+        function createAnimation(x, y) {
+            const dot = document.createElement('div');
+            dot.classList.add('animation-dot');
+            dot.id = `dot-${animationCounter++}`; // ID unik
+            document.body.appendChild(dot); // Tambahkan ke body
+
+            // Hitung posisi relatif terhadap viewport
+            // Karena video dan canvas di-mirror, kita perlu sesuaikan x
+            const rect = canvas.getBoundingClientRect();
+            const mirroredX = rect.width - x; // Sesuaikan dengan mirroring
+            const viewportX = rect.left + mirroredX;
+            const viewportY = rect.top + y;
+            
+            dot.style.left = `${viewportX}px`;
+            dot.style.top = `${viewportY}px`;
+
+            // Animasi menghilang
+            setTimeout(() => {
+                dot.style.opacity = '0';
+                dot.style.transform = 'translate(-50%, -50%) scale(1.5)'; // Sedikit membesar sebelum hilang
+            }, 50); // Delay kecil agar transisi terlihat
+
+            setTimeout(() => {
+                dot.remove();
+            }, 550); // Hapus setelah animasi selesai (total 50 + 500ms transisi)
+        }
+
+
+        async function detectHands() {
+            if (!model || video.readyState !== video.HAVE_ ENOUGH_DATA) {
+                requestAnimationFrame(detectHands);
+                return;
+            }
+
+            // Set ukuran canvas sesuai video
+            if (video.videoWidth !== 0 && video.videoHeight !== 0 && 
+                (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                video.style.display = 'block'; // Tampilkan video setelah ukurannya benar
+            }
+            
+            const estimationConfig = {flipHorizontal: false}; // Sudah di-mirror di CSS, jadi tidak perlu di sini
+            const hands = await model.estimateHands(video, estimationConfig);
+            drawHand(hands);
+
+            requestAnimationFrame(detectHands);
+        }
+
+        async function init() {
+            const camera = await setupCamera();
+            if (camera) {
+                video.play();
+                await loadHandModel();
+                detectHands();
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
